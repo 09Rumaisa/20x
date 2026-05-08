@@ -4,7 +4,7 @@ import { Label } from '@/components/ui/Label'
 import { Button } from '@/components/ui/Button'
 import { useEnterpriseStore } from '@/stores/enterprise-store'
 import { EnterpriseLoginModal } from './EnterpriseLoginModal'
-import { enterpriseApi } from '@/lib/ipc-client'
+import { enterpriseApi, skillApi } from '@/lib/ipc-client'
 
 interface AiGatewayStatus {
   configured: boolean
@@ -26,27 +26,34 @@ export function EnterpriseSettings() {
     isSyncing,
     userEmail,
     currentTenant,
+    lastSyncStats,
+    lastSyncMs,
     switchOrg,
     logout,
     loadSession,
-    setSyncing
+    setSyncing,
+    setSyncResult
   } = useEnterpriseStore()
 
   const [showLoginModal, setShowLoginModal] = useState(false)
   const [aiGatewayStatus, setAiGatewayStatus] = useState<AiGatewayStatus | null>(null)
+  const [skillCount, setSkillCount] = useState<number | null>(null)
+  const [isSyncingResources, setIsSyncingResources] = useState(false)
 
   useEffect(() => {
     loadSession()
   }, [loadSession])
 
-  // Fetch AI gateway status when authenticated
+  // Fetch AI gateway status and skill count when authenticated
   useEffect(() => {
     if (isAuthenticated && currentTenant) {
       enterpriseApi.getAiGatewayStatus().then(setAiGatewayStatus).catch(() => {
         setAiGatewayStatus(null)
       })
+      skillApi.getAll().then((skills) => setSkillCount(skills.length)).catch(() => {})
     } else {
       setAiGatewayStatus(null)
+      setSkillCount(null)
     }
   }, [isAuthenticated, currentTenant])
 
@@ -56,14 +63,16 @@ export function EnterpriseSettings() {
       setSyncing(false)
       if (data.success) {
         console.log(`[enterprise] Sync completed in ${data.syncMs}ms`)
+        setSyncResult(data.syncStats ?? null, data.syncMs ?? null)
       } else {
         console.warn('[enterprise] Sync failed:', data.error)
       }
-      // Refresh AI gateway status after sync
+      // Refresh AI gateway status and skill count after sync
       enterpriseApi.getAiGatewayStatus().then(setAiGatewayStatus).catch(() => {})
+      skillApi.getAll().then((skills) => setSkillCount(skills.length)).catch(() => {})
     })
     return () => unsubscribe?.()
-  }, [setSyncing])
+  }, [setSyncing, setSyncResult])
 
   const handleLogout = useCallback(async () => {
     await logout()
@@ -212,8 +221,62 @@ export function EnterpriseSettings() {
             </div>
           )}
 
+          {/* Skills synced from cloud */}
+          <div className="flex items-center justify-between py-2 border-b border-border">
+            <div className="space-y-0.5">
+              <Label>Skills</Label>
+              <p className="text-xs text-muted-foreground">
+                Skills synced from cloud
+              </p>
+            </div>
+            <div className="text-right space-y-0.5">
+              {skillCount !== null ? (
+                <span className="text-sm text-foreground">
+                  {skillCount} skill{skillCount !== 1 ? 's' : ''}
+                </span>
+              ) : (
+                <span className="text-sm text-muted-foreground">Loading...</span>
+              )}
+              {lastSyncStats && (
+                <p className="text-xs text-muted-foreground">
+                  Last sync: {lastSyncStats.skills.created} new, {lastSyncStats.skills.updated} updated{lastSyncStats.skills.pushed > 0 ? `, ${lastSyncStats.skills.pushed} pushed` : ''}
+                  {lastSyncMs ? ` (${(lastSyncMs / 1000).toFixed(1)}s)` : ''}
+                </p>
+              )}
+              {lastSyncStats && lastSyncStats.errors.length > 0 && (
+                <div className="text-xs text-red-400">
+                  {lastSyncStats.errors.map((err, i) => (
+                    <p key={i} className="truncate max-w-[350px]" title={err}>{err}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Actions */}
           <div className="flex items-center gap-3 pt-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={async () => {
+                setIsSyncingResources(true)
+                try {
+                  const result = await enterpriseApi.syncResources()
+                  if (result) {
+                    setSyncResult(result, null)
+                    // Refresh skill count after sync
+                    skillApi.getAll().then((skills) => setSkillCount(skills.length)).catch(() => {})
+                  }
+                } catch (err) {
+                  console.error('[enterprise] Resource sync failed:', err)
+                } finally {
+                  setIsSyncingResources(false)
+                }
+              }}
+              disabled={isLoading || isSyncingResources}
+            >
+              {isSyncingResources ? 'Syncing...' : 'Sync resources'}
+            </Button>
             <Button
               variant="secondary"
               size="sm"

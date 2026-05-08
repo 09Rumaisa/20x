@@ -989,9 +989,19 @@ export function registerIpcHandlers(
           })
         }
 
-        // Notify renderer that background sync is complete
+        // Notify renderer that background sync is complete (include sync stats)
         if (!sender.isDestroyed()) {
-          sender.send('enterprise:syncComplete', { success: true, syncMs })
+          sender.send('enterprise:syncComplete', {
+            success: true,
+            syncMs,
+            syncStats: {
+              agents: syncResult.agents,
+              skills: syncResult.skills,
+              mcpServers: syncResult.mcpServers,
+              taskSources: syncResult.taskSources,
+              errors: syncResult.errors
+            }
+          })
         }
       } catch (err) {
         console.error('[enterprise] Post-connect setup error (non-fatal):', err)
@@ -1129,6 +1139,18 @@ export function registerIpcHandlers(
     } catch (err) {
       console.error('[enterprise] Failed to read AI gateway status:', err)
       return base
+    }
+  })
+
+  ipcMain.handle('enterprise:syncResources', async () => {
+    const syncResult = await syncManager.syncEnterpriseResources()
+    if (!syncResult) return null
+    return {
+      agents: syncResult.agents,
+      skills: syncResult.skills,
+      mcpServers: syncResult.mcpServers,
+      taskSources: syncResult.taskSources,
+      errors: syncResult.errors
     }
   })
 

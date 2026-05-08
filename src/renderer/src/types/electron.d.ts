@@ -359,6 +359,7 @@ interface ElectronAPI {
       currentTenant: { id: string; name: string } | null
     }>
     refreshToken: () => Promise<{ token: string }>
+    syncResources: () => Promise<{ agents: { created: number; updated: number }; skills: { created: number; updated: number; pushed: number }; mcpServers: { created: number; updated: number }; taskSources: { created: number; updated: number }; errors: string[] } | null>
     apiRequest: (method: string, path: string, body?: unknown) => Promise<unknown>
     getApiUrl: () => Promise<string>
     getJwt: () => Promise<string>
@@ -377,7 +378,7 @@ interface ElectronAPI {
         currentPeriodEnd: string | null
       } | null
     }>
-    onSyncComplete: (callback: (data: { success: boolean; syncMs?: number; error?: string }) => void) => () => void
+    onSyncComplete: (callback: (data: { success: boolean; syncMs?: number; error?: string; syncStats?: { agents: { created: number; updated: number }; skills: { created: number; updated: number; pushed: number }; mcpServers: { created: number; updated: number }; taskSources: { created: number; updated: number }; errors: string[] } }) => void) => () => void
   }
   updater: {
     check: () => Promise<{ success: boolean; version?: string; error?: string }>
