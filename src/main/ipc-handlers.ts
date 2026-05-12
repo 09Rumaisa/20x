@@ -1097,7 +1097,7 @@ export function registerIpcHandlers(
   ipcMain.handle('enterprise:getAiGatewayStatus', async () => {
     const base = { configured: false, modelCount: 0, keyName: null as string | null, expiresAt: null as string | null, subscription: null as { planName: string; status: string; planId: string; currentPeriodEnd: string | null } | null }
     try {
-      const { readEnterpriseAiGatewayConfig } = await import('./enterprise-ai-gateway')
+      const { readEnterpriseAiGatewayConfig, AI_GATEWAY_SUBSCRIPTION_STATUS } = await import('./enterprise-ai-gateway')
       const config = readEnterpriseAiGatewayConfig(db)
       if (config) {
         base.configured = true
@@ -1127,6 +1127,24 @@ export function registerIpcHandlers(
               status: sub.status,
               currentPeriodEnd: sub.currentPeriodEnd ?? null
             }
+
+            // Auto-fetch AI gateway key when subscription is active but not yet configured locally.
+            // This handles the case where a plan was activated after the initial tenant selection
+            // (e.g. by an enterprise admin), so the first fetch attempt failed silently.
+            if (sub.status === AI_GATEWAY_SUBSCRIPTION_STATUS.ACTIVE && !base.configured) {
+              try {
+                await enterpriseAuth.refreshAiGatewayVirtualKey()
+                const updatedConfig = readEnterpriseAiGatewayConfig(db)
+                if (updatedConfig) {
+                  base.configured = true
+                  base.modelCount = updatedConfig.models?.length ?? 0
+                  base.keyName = updatedConfig.keyName ?? null
+                  base.expiresAt = updatedConfig.expiresAt ?? null
+                }
+              } catch (keyErr) {
+                console.warn('[enterprise] Auto-fetch of AI gateway key failed:', keyErr)
+              }
+            }
           }
         } catch (apiErr) {
           // Server API may be unavailable (e.g. AI gateway disabled) — that's fine,
@@ -1143,6 +1161,16 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('enterprise:syncResources', async () => {
+    // Refresh AI gateway virtual key alongside resource sync so that
+    // clicking "Sync resources" also picks up newly-activated subscriptions.
+    if (enterpriseAuth) {
+      try {
+        await enterpriseAuth.refreshAiGatewayVirtualKey()
+      } catch (err) {
+        console.warn('[enterprise] AI gateway key refresh during sync failed (non-fatal):', err)
+      }
+    }
+
     const syncResult = await syncManager.syncEnterpriseResources()
     if (!syncResult) return null
     return {
