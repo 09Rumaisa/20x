@@ -4,6 +4,7 @@ import { join, delimiter } from 'path'
 import { homedir } from 'os'
 import { execSync } from 'child_process'
 import { buildMergedOpencodeConfig } from '../utils/opencode-config'
+import { ENTERPRISE_AI_GATEWAY_PROVIDER_ID, readEnterpriseAiGatewayConfig } from '../enterprise-ai-gateway'
 import type { DatabaseManager } from '../database'
 import type {
   CodingAgentAdapter,
@@ -325,10 +326,51 @@ export class OpencodeAdapter implements CodingAgentAdapter {
         default?: Record<string, string>
       } | undefined
 
+      // Filter stale models from the enterprise AI gateway provider.
+      // The OpenCode server uses PATCH (merge semantics) for config updates,
+      // so models removed from LiteLLM persist in the server's config.
+      // We apply a client-side filter using the fresh model list from SQLite
+      // (which was just refreshed from LiteLLM by the caller in agent-manager).
+      if (data?.providers && this.db) {
+        this.filterStaleProviderModels(data.providers)
+      }
+
       return data ? { providers: data.providers || [], default: data.default || {} } : null
     } catch (error: unknown) {
       console.log('[OpencodeAdapter] Could not get providers:', error instanceof Error ? error.message : error)
       return null
+    }
+  }
+
+  /**
+   * Remove models from the enterprise AI gateway provider that are no longer
+   * present in the fresh config stored in SQLite. Mutates the providers array
+   * in place.
+   */
+  private filterStaleProviderModels(
+    providers: { id: string; name: string; models: unknown; [key: string]: unknown }[]
+  ): void {
+    if (!this.db) return
+
+    const freshConfig = readEnterpriseAiGatewayConfig(this.db)
+    if (!freshConfig?.models) return
+
+    const freshModelIds = new Set(freshConfig.models.map(m => m.id))
+    const provider = providers.find(p => p.id === ENTERPRISE_AI_GATEWAY_PROVIDER_ID)
+    if (!provider?.models || typeof provider.models !== 'object') return
+
+    const serverModels = provider.models as Record<string, unknown>
+    const filtered: Record<string, unknown> = {}
+    for (const [modelId, modelConfig] of Object.entries(serverModels)) {
+      if (freshModelIds.has(modelId)) {
+        filtered[modelId] = modelConfig
+      }
+    }
+
+    const removed = Object.keys(serverModels).length - Object.keys(filtered).length
+    if (removed > 0) {
+      provider.models = filtered
+      console.log(`[OpencodeAdapter] Filtered out ${removed} stale model(s) from ${ENTERPRISE_AI_GATEWAY_PROVIDER_ID} provider`)
     }
   }
 

@@ -1,6 +1,9 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { OpencodeAdapter } from './opencode-adapter'
 import { SessionStatusType } from './coding-agent-adapter'
+import { ENTERPRISE_AI_GATEWAY_PROVIDER_ID } from '../enterprise-ai-gateway'
+
+import * as enterpriseAiGateway from '../enterprise-ai-gateway'
 
 describe('OpencodeAdapter', () => {
   describe('waitForMcpServersReady', () => {
@@ -337,7 +340,7 @@ describe('OpencodeAdapter', () => {
       expect(status.type).toBe(SessionStatusType.IDLE)
     })
 
-    it('returns WAITING_APPROVAL if underlying status is waiting_user', async () => {
+    it('returns WAITING_APPROVAL if underlying status is waiting_user (question)', async () => {
       const adapter = new OpencodeAdapter()
       const mockClient = {
         session: {
@@ -359,6 +362,117 @@ describe('OpencodeAdapter', () => {
 
       const status = await adapter.getStatus('session-2', { agentId: 'agent-1', taskId: 'task-1', workspaceDir: '/tmp/ws' })
       expect(status.type).toBe(SessionStatusType.WAITING_APPROVAL)
+    })
+  })
+
+  describe('filterStaleProviderModels', () => {
+    afterEach(() => vi.restoreAllMocks())
+
+    it('removes models not present in fresh SQLite config', () => {
+      const mockDb = { getSetting: vi.fn() }
+      const adapter = new OpencodeAdapter(mockDb)
+
+      vi.spyOn(enterpriseAiGateway, 'readEnterpriseAiGatewayConfig').mockReturnValue({
+        apiKey: 'sk-test',
+        baseUrl: 'https://litellm.example.com',
+        models: [
+          { id: 'kept-model', name: 'Kept Model' },
+          { id: 'new-model', name: 'New Model' }
+        ]
+      })
+
+      const providers = [
+        {
+          id: ENTERPRISE_AI_GATEWAY_PROVIDER_ID,
+          name: 'Peakflo',
+          models: {
+            'old-model-1': { name: 'Old Model 1' },
+            'old-model-2': { name: 'Old Model 2' },
+            'kept-model': { name: 'Kept Model' }
+          } as unknown
+        },
+        {
+          id: 'anthropic',
+          name: 'Anthropic',
+          models: { 'claude-4': { name: 'Claude 4' } } as unknown
+        }
+      ]
+
+      ;(adapter as any).filterStaleProviderModels(providers)
+
+      const peakflo = providers.find(p => p.id === ENTERPRISE_AI_GATEWAY_PROVIDER_ID)!
+      const models = peakflo.models as Record<string, unknown>
+      expect(models['old-model-1']).toBeUndefined()
+      expect(models['old-model-2']).toBeUndefined()
+      expect(models['kept-model']).toEqual({ name: 'Kept Model' })
+
+      // Other providers untouched
+      const anthropic = providers.find(p => p.id === 'anthropic')!
+      expect(anthropic.models).toEqual({ 'claude-4': { name: 'Claude 4' } })
+    })
+
+    it('does not filter when no db is available', () => {
+      const adapter = new OpencodeAdapter() // no db
+      const readSpy = vi.spyOn(enterpriseAiGateway, 'readEnterpriseAiGatewayConfig')
+
+      const providers = [
+        {
+          id: ENTERPRISE_AI_GATEWAY_PROVIDER_ID,
+          name: 'Peakflo',
+          models: { 'model-a': { name: 'A' }, 'model-b': { name: 'B' } } as unknown
+        }
+      ]
+
+      ;(adapter as any).filterStaleProviderModels(providers)
+
+      expect(readSpy).not.toHaveBeenCalled()
+      expect(Object.keys(providers[0].models as Record<string, unknown>)).toEqual(['model-a', 'model-b'])
+    })
+
+    it('does not filter when gateway config returns null', () => {
+      const mockDb = { getSetting: vi.fn() }
+      const adapter = new OpencodeAdapter(mockDb)
+
+      vi.spyOn(enterpriseAiGateway, 'readEnterpriseAiGatewayConfig').mockReturnValue(null)
+
+      const providers = [
+        {
+          id: ENTERPRISE_AI_GATEWAY_PROVIDER_ID,
+          name: 'Peakflo',
+          models: { 'model-a': { name: 'A' } } as unknown
+        }
+      ]
+
+      ;(adapter as any).filterStaleProviderModels(providers)
+
+      expect(Object.keys(providers[0].models as Record<string, unknown>)).toEqual(['model-a'])
+    })
+
+    it('is a no-op when all server models match fresh config', () => {
+      const mockDb = { getSetting: vi.fn() }
+      const adapter = new OpencodeAdapter(mockDb)
+
+      vi.spyOn(enterpriseAiGateway, 'readEnterpriseAiGatewayConfig').mockReturnValue({
+        apiKey: 'sk-test',
+        baseUrl: 'https://litellm.example.com',
+        models: [
+          { id: 'model-a', name: 'A' },
+          { id: 'model-b', name: 'B' }
+        ]
+      })
+
+      const providers = [
+        {
+          id: ENTERPRISE_AI_GATEWAY_PROVIDER_ID,
+          name: 'Peakflo',
+          models: { 'model-a': { name: 'A' }, 'model-b': { name: 'B' } } as unknown
+        }
+      ]
+
+      ;(adapter as any).filterStaleProviderModels(providers)
+
+      const models = providers[0].models as Record<string, unknown>
+      expect(Object.keys(models)).toEqual(['model-a', 'model-b'])
     })
   })
 })
