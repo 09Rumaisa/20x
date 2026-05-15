@@ -59,6 +59,7 @@ interface PollingEntry {
   initialPromptSent?: boolean
   createdAt: number  // Timestamp to enforce grace period before IDLE transition
   hasSeenWork?: boolean  // True once we've seen at least one non-IDLE status
+  lastPartReceivedAt?: number  // Timestamp of last received data — used for secondary grace period
 }
 
 interface MessageAttachmentRef {
@@ -1552,6 +1553,12 @@ Only create this file when there's genuinely useful monitoring to do. Do not cre
         }
       }
 
+      // Update last activity timestamp when new parts arrive. This supports
+      // the secondary grace period for models with brief idle gaps.
+      if (newParts.length > 0) {
+        entry.lastPartReceivedAt = Date.now()
+      }
+
       // hasSeenWork is set exclusively in the BUSY / WAITING_APPROVAL status
       // handler below — not here.  Message content is unreliable (user echoes,
       // stale fingerprint updates from previous turns can produce non-user parts
@@ -1737,6 +1744,19 @@ Only create this file when there's genuinely useful monitoring to do. Do not cre
 
         if (!pollingEntry?.hasSeenWork && sessionAge < IDLE_GRACE_PERIOD_MS) {
           return
+        }
+
+        // Secondary grace period: after receiving data, don't immediately declare
+        // IDLE. Models like featherless kimi k2.5 may have brief idle gaps between
+        // tool call rounds where the status API momentarily reports idle before the
+        // next tool execution starts. Wait at least 5 seconds after the last
+        // received data before allowing IDLE transition.
+        const POST_DATA_GRACE_MS = 5_000
+        if (pollingEntry?.lastPartReceivedAt) {
+          const timeSinceLastData = Date.now() - pollingEntry.lastPartReceivedAt
+          if (timeSinceLastData < POST_DATA_GRACE_MS) {
+            return
+          }
         }
 
         console.log(`[AgentManager] Detected IDLE status for ${sessionId}, calling transitionToIdle`)
