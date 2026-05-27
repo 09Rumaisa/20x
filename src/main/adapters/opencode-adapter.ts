@@ -879,6 +879,15 @@ export class OpencodeAdapter implements CodingAgentAdapter {
     }).catch((err: unknown) => {
       if (!(err instanceof Error) || err.name !== 'AbortError') {
         console.error('[OpencodeAdapter] prompt error:', err)
+        // Surface HTTP-level errors (network failures, 4xx/5xx, connection refused)
+        // via promptErrors so getStatus() returns ERROR instead of silent IDLE.
+        // Without this, the error is swallowed and the session appears to produce
+        // no response — the user sees idle with no feedback after the grace period.
+        const errorMsg = err instanceof Error ? err.message : String(err)
+        this.promptErrors.set(sessionId, errorMsg)
+        if (this.onDataAvailable) {
+          this.onDataAvailable(sessionId)
+        }
       }
     }).finally(() => {
       this.promptAborts.delete(sessionId)
