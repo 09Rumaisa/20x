@@ -1089,9 +1089,12 @@ export class AgentManager extends EventEmitter {
     await yieldEL()
 
     // Build MCP servers config for adapter
-    // Mastermind, triage, and subtask sessions always get task-management access
+    // Real task sessions always get task-management access so they can triage,
+    // orchestrate subtasks, and inspect live task state without depending on
+    // per-agent MCP configuration.
     const isMastermind = taskId === 'mastermind-session'
-    const mcpServers = await this.buildMcpServersForAdapter(agentId, { ensureTaskManagement: isMastermind || isTriageSession || isSubtask, taskScope })
+    const ensureTaskManagement = isMastermind || isTriageSession || isSubtask || !!task
+    const mcpServers = await this.buildMcpServersForAdapter(agentId, { ensureTaskManagement, taskScope })
 
     // Build session config
     const sessionConfig: SessionConfig = {
@@ -1267,6 +1270,11 @@ export class AgentManager extends EventEmitter {
             promptText += '\n\nThis task has subtasks. Each subtask has its own agent. Focus on coordination and any work not covered by subtasks.'
             promptText += '\nUse `list_subtasks` or `get_task` via MCP tools to check live subtask status and outputs.'
           }
+
+          promptText += '\n\nYou can use the `task-management` MCP server to orchestrate execution instead of doing everything yourself.'
+          promptText += '\n- Use `create_subtask` to break work down.'
+          promptText += '\n- Use `start_task` to triage+start an unassigned task, start an assigned task, or start a specific subtask by ID.'
+          promptText += '\n- Use `wait_for_subtasks` to block until subtasks reach `ready_for_review` or `completed` before continuing coordination.'
         }
 
         // Append output field instructions
@@ -2113,6 +2121,94 @@ Only create this file when there's genuinely useful monitoring to do. Do not cre
       throw new Error(`No adapter available for agent ${agentId}`)
     }
     return this.startAdapterSession(adapter, agentId, taskId, workspaceDir, skipInitialPrompt)
+  }
+
+  async startTask(taskId: string, opts?: { preferSubtasks?: boolean; allowTriage?: boolean }): Promise<{
+    action: 'task_started' | 'subtask_started' | 'triage_started' | 'already_running' | 'no_action'
+    sessionId?: string
+    startedTaskId?: string
+    agentId?: string
+  }> {
+    const task = this.db.getTask(taskId)
+    if (!task) {
+      throw new Error(`Task not found: ${taskId}`)
+    }
+
+    const preferSubtasks = opts?.preferSubtasks !== false
+    const allowTriage = opts?.allowTriage !== false
+
+    if (preferSubtasks) {
+      const subtasks = this.db.getSubtasks(taskId)
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+
+      const activeSubtask = subtasks.find((subtask) =>
+        subtask.status === TaskStatus.AgentWorking ||
+        subtask.status === TaskStatus.ReadyForReview ||
+        subtask.status === TaskStatus.Triaging ||
+        subtask.status === TaskStatus.AgentLearning
+      )
+      if (activeSubtask) {
+        return {
+          action: 'already_running',
+          startedTaskId: activeSubtask.id,
+          agentId: activeSubtask.agent_id ?? undefined
+        }
+      }
+
+      const nextSubtask = subtasks.find((subtask) => subtask.status === TaskStatus.NotStarted && !!subtask.agent_id)
+      if (nextSubtask?.agent_id) {
+        const sessionId = await this.startSession(nextSubtask.agent_id, nextSubtask.id)
+        return {
+          action: 'subtask_started',
+          sessionId,
+          startedTaskId: nextSubtask.id,
+          agentId: nextSubtask.agent_id
+        }
+      }
+    }
+
+    const runningSession = this.findSessionByTaskId(taskId)
+    if (runningSession && runningSession.session.status !== 'idle' && runningSession.session.status !== 'error') {
+      return {
+        action: 'already_running',
+        sessionId: runningSession.sessionId,
+        startedTaskId: taskId,
+        agentId: runningSession.session.agentId
+      }
+    }
+
+    if (!task.agent_id) {
+      if (!allowTriage || task.parent_task_id) {
+        return { action: 'no_action', startedTaskId: taskId }
+      }
+
+      const defaultAgentId = this.resolveDefaultAgentId()
+      if (!defaultAgentId) {
+        return { action: 'no_action', startedTaskId: taskId }
+      }
+
+      this.db.updateTask(taskId, { status: TaskStatus.Triaging })
+      this.sendToRenderer('task:updated', {
+        taskId,
+        updates: { status: TaskStatus.Triaging }
+      })
+
+      const sessionId = await this.startSession(defaultAgentId, taskId)
+      return {
+        action: 'triage_started',
+        sessionId,
+        startedTaskId: taskId,
+        agentId: defaultAgentId
+      }
+    }
+
+    const sessionId = await this.startSession(task.agent_id, taskId)
+    return {
+      action: 'task_started',
+      sessionId,
+      startedTaskId: taskId,
+      agentId: task.agent_id
+    }
   }
 
   /**
@@ -3356,6 +3452,12 @@ Only create this file when there's genuinely useful monitoring to do. Do not cre
     lines.push('```')
 
     return lines.join('\n')
+  }
+
+  private resolveDefaultAgentId(): string | null {
+    const agents = this.db.getAgents()
+    const defaultAgent = agents.find((agent) => agent.is_default)
+    return defaultAgent?.id ?? agents[0]?.id ?? null
   }
 
   private buildTriagePrompt(task: TaskRecord): string {

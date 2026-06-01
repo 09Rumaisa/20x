@@ -92,17 +92,26 @@ function createMockDb(agentConfig: Record<string, unknown> = {}) {
       repos: ['org/repo'],
       skill_ids: ['skill-1'],
     })),
+    getTasks: vi.fn(() => []),
+    getSubtasks: vi.fn(() => []),
     getAgent: vi.fn(() => ({
       id: 'agent-1',
       name: 'Test Agent',
       config: agentConfig,
     })),
+    getAgents: vi.fn(() => ([{
+      id: 'agent-1',
+      name: 'Test Agent',
+      is_default: true,
+      config: agentConfig,
+    }])),
     getSkills: vi.fn(() => [makeSkillRecord()]),
     getSkillsByIds: vi.fn(() => [makeSkillRecord()]),
     getSkillByName: vi.fn(() => null),
     getMcpServer: vi.fn(() => null),
     getSecretsByIds: vi.fn(() => []),
     getSetting: vi.fn(() => null),
+    getWorkspaceDir: vi.fn(() => '/tmp/test-workspace'),
     updateTask: vi.fn(),
   } as unknown as ConstructorParameters<typeof AgentManager>[0]
 }
