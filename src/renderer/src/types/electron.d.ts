@@ -416,6 +416,7 @@ interface ElectronAPI {
   onAgentIncompatibleSession: (callback: (event: { taskId: string; agentId: string; error: string }) => void) => () => void
   onTaskUpdated: (callback: (event: { taskId: string; updates: Partial<WorkfloTask> }) => void) => () => void
   onTaskCreated: (callback: (event: { task: WorkfloTask }) => void) => () => void
+  onTaskDeleted: (callback: (event: { taskId: string }) => void) => () => void
   onHeartbeatAlert: (callback: (event: HeartbeatAlertEvent) => void) => () => void
   onHeartbeatDisabled: (callback: (event: { taskId: string; reason: string }) => void) => () => void
   onWorktreeProgress: (callback: (event: WorktreeProgressEvent) => void) => () => void

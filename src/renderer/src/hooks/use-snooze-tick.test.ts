@@ -9,7 +9,8 @@ vi.mock('@/lib/ipc-client', () => ({
   onOverdueCheck: vi.fn((cb: () => void) => {
     overdueCheckCallback = cb
     return () => { overdueCheckCallback = null }
-  })
+  }),
+  onTaskDeleted: vi.fn(() => vi.fn()),
 }))
 
 function makeTask(overrides: Partial<WorkfloTask> = {}): WorkfloTask {

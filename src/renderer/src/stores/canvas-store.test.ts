@@ -9,6 +9,7 @@ vi.mock('@/lib/ipc-client', () => ({
     set: vi.fn().mockResolvedValue(undefined),
     getAll: vi.fn().mockResolvedValue({}),
   },
+  onTaskDeleted: vi.fn(() => vi.fn()),
 }))
 
 describe('canvas-store', () => {
@@ -124,6 +125,18 @@ describe('canvas-store', () => {
       expect(useCanvasStore.getState().panels).toHaveLength(1)
       useCanvasStore.getState().removePanel(id)
       expect(useCanvasStore.getState().panels).toHaveLength(0)
+    })
+
+    it('should remove panels by refId', () => {
+      useCanvasStore.getState().addPanel({ type: 'task', refId: 't1', title: 'Task 1', x: 0, y: 0, width: 400, height: 300 })
+      useCanvasStore.getState().addPanel({ type: 'task', refId: 't2', title: 'Task 2', x: 100, y: 100, width: 400, height: 300 })
+      useCanvasStore.getState().addPanel({ type: 'transcript', refId: 't1', title: 'Transcript 1', x: 200, y: 200, width: 400, height: 300 })
+      
+      expect(useCanvasStore.getState().panels).toHaveLength(3)
+      useCanvasStore.getState().removePanelsByRefId('t1')
+      const { panels } = useCanvasStore.getState()
+      expect(panels).toHaveLength(1)
+      expect(panels[0].refId).toBe('t2')
     })
 
     it('should update a panel', () => {

@@ -10,6 +10,7 @@ vi.mock('@/lib/ipc-client', () => ({
     openPath: vi.fn(),
     showItemInFolder: vi.fn(),
   },
+  onTaskDeleted: vi.fn(() => vi.fn()),
 }))
 
 function makeField(overrides: Partial<OutputField> = {}): OutputField {

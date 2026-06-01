@@ -157,6 +157,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('task:created', handler)
     return () => ipcRenderer.removeListener('task:created', handler)
   },
+  onTaskDeleted: (callback: (event: unknown) => void): (() => void) => {
+    const handler = (_: unknown, data: unknown): void => callback(data)
+    ipcRenderer.on('task:deleted', handler)
+    return () => ipcRenderer.removeListener('task:deleted', handler)
+  },
   settings: {
     get: (key: string): Promise<string | null> => ipcRenderer.invoke('settings:get', key),
     set: (key: string, value: string): Promise<void> => ipcRenderer.invoke('settings:set', key, value),

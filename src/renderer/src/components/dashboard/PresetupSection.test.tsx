@@ -14,7 +14,8 @@ vi.mock('@/lib/ipc-client', () => ({
     get: (...args: unknown[]) => mockSettingsGet(...args),
     set: (...args: unknown[]) => mockSettingsSet(...args),
     getAll: vi.fn().mockResolvedValue({})
-  }
+  },
+  onTaskDeleted: vi.fn(() => vi.fn()),
 }))
 
 afterEach(cleanup)

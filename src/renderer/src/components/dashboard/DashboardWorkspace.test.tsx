@@ -37,6 +37,7 @@ vi.mock('@/lib/ipc-client', () => ({
   },
   onTaskUpdated: vi.fn(() => () => {}),
   onTaskCreated: vi.fn(() => () => {}),
+  onTaskDeleted: vi.fn(() => () => {}),
   onTasksRefresh: vi.fn(() => () => {}),
   onAgentStatus: vi.fn(() => () => {}),
   onAgentOutput: vi.fn(() => () => {}),

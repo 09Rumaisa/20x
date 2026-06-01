@@ -4,14 +4,14 @@ import { useEnterpriseStore, type EnterpriseSyncStats } from './enterprise-store
 // Mock the ipc-client so the store can be imported without Electron
 vi.mock('@/lib/ipc-client', () => ({
   enterpriseApi: {
+    apiRequest: vi.fn().mockResolvedValue({}),
+    getSession: vi.fn().mockResolvedValue({ isAuthenticated: false }),
     login: vi.fn(),
     selectTenant: vi.fn(),
     logout: vi.fn(),
-    getSession: vi.fn(),
-    listCompanies: vi.fn(),
-    signupInBrowser: vi.fn(),
-    getAiGatewayStatus: vi.fn()
-  }
+    refreshToken: vi.fn(),
+  },
+  onTaskDeleted: vi.fn(() => vi.fn()),
 }))
 
 describe('useEnterpriseStore — sync stats', () => {

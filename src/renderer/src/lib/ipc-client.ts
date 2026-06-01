@@ -219,6 +219,10 @@ export const onTaskCreated = (callback: (event: { task: WorkfloTask }) => void):
   return window.electronAPI.onTaskCreated(callback)
 }
 
+export const onTaskDeleted = (callback: (event: { taskId: string }) => void): (() => void) => {
+  return window.electronAPI.onTaskDeleted(callback)
+}
+
 export const settingsApi = {
   get: (key: string): Promise<string | null> => {
     return window.electronAPI.settings.get(key)

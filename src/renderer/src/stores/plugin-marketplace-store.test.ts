@@ -14,7 +14,8 @@ vi.mock('@/lib/ipc-client', () => ({
     uninstallPlugin: vi.fn().mockResolvedValue(true),
     enablePlugin: vi.fn().mockResolvedValue({ id: 'p-1', enabled: true }),
     disablePlugin: vi.fn().mockResolvedValue({ id: 'p-1', enabled: false })
-  }
+  },
+  onTaskDeleted: vi.fn(() => vi.fn())
 }))
 
 beforeEach(() => {

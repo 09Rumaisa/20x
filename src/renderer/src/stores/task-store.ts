@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { WorkfloTask, CreateTaskDTO, UpdateTaskDTO, OutputField, OutputFieldType } from '@/types'
-import { taskApi, taskSourceApi, onTaskUpdated, onTaskCreated, onTasksRefresh } from '@/lib/ipc-client'
+import { taskApi, taskSourceApi, onTaskUpdated, onTaskCreated, onTaskDeleted, onTasksRefresh } from '@/lib/ipc-client'
 
 const VALID_OUTPUT_FIELD_TYPES = new Set<OutputFieldType>([
   'text',
@@ -149,6 +149,21 @@ onTaskCreated((event) => {
     // Avoid duplicates
     if (state.tasks.some((t) => t.id === event.task.id)) return state
     return { tasks: [normalizeTask(event.task), ...state.tasks] }
+  })
+})
+
+// Listen for task deletions from backend (UI-initiated or external MCP)
+onTaskDeleted((event) => {
+  const taskId = event.taskId
+  useTaskStore.setState((state) => ({
+    tasks: state.tasks.filter((t) => t.id !== taskId),
+    selectedTaskId: state.selectedTaskId === taskId ? null : state.selectedTaskId
+  }))
+
+  // Automatically remove from canvas if it was added.
+  // Dynamic import avoids circular dependency and ensures canvas store is only loaded if needed.
+  import('./canvas-store').then(({ useCanvasStore }) => {
+    useCanvasStore.getState().removePanelsByRefId(taskId)
   })
 })
 

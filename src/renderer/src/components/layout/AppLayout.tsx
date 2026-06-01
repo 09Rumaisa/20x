@@ -51,8 +51,10 @@ export function AppLayout() {
   const openSettings = useUIStore((s) => s.openSettings)
   const closeModal = useUIStore((s) => s.closeModal)
   const setCanvasPendingTaskId = useUIStore((s) => s.setCanvasPendingTaskId)
+  const clearCanvasPendingTask = useUIStore((s) => s.clearCanvasPendingTask)
   const dashboardPreviewTaskId = useUIStore((s) => s.dashboardPreviewTaskId)
   const closeDashboardPreview = useUIStore((s) => s.closeDashboardPreview)
+  const canvasPendingTaskId = useUIStore((s) => s.canvasPendingTaskId)
   const showOrchestrator = useUIStore((s) => s.showOrchestrator)
   const setShowOrchestrator = useUIStore((s) => s.setShowOrchestrator)
   const toggleOrchestrator = useUIStore((s) => s.toggleOrchestrator)
@@ -433,6 +435,10 @@ export function AppLayout() {
             }
             try {
               await deleteTask(deletingTaskId)
+              // Clear pending task if it's the one being deleted
+              if (canvasPendingTaskId === deletingTaskId) {
+                clearCanvasPendingTask()
+              }
             } catch (err) {
               const reason = err instanceof Error ? err.message : String(err)
               showToast(`Failed to delete task: ${reason}`, true)

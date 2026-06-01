@@ -15,11 +15,9 @@ vi.mock('@/lib/ipc-client', () => ({
     login: vi.fn(),
     selectTenant: vi.fn(),
     logout: vi.fn(),
-    getSession: vi.fn().mockResolvedValue({ isAuthenticated: false }),
     refreshToken: vi.fn(),
-    getAuthTokens: vi.fn(),
-    listCompanies: vi.fn()
-  }
+  },
+  onTaskDeleted: vi.fn(() => vi.fn()),
 }))
 
 import { enterpriseApi } from '@/lib/ipc-client'

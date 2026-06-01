@@ -113,6 +113,7 @@ interface CanvasState {
   // Panel actions
   addPanel: (panel: Omit<CanvasPanelData, 'id' | 'zIndex'>) => string
   removePanel: (id: string) => void
+  removePanelsByRefId: (refId: string) => void
   updatePanel: (id: string, updates: Partial<Omit<CanvasPanelData, 'id'>>) => void
   bringToFront: (id: string) => void
   clearPanels: () => void
@@ -314,6 +315,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     get().removeEdgesForPanel(id)
     set((s) => ({ panels: s.panels.filter((p) => p.id !== id) }))
     scheduleSave()
+  },
+
+  removePanelsByRefId: (refId) => {
+    const { panels } = get()
+    const panelsToRemove = panels.filter((p) => p.refId === refId)
+    for (const p of panelsToRemove) {
+      get().removeEdgesForPanel(p.id)
+    }
+    set((s) => ({
+      panels: s.panels.filter((p) => p.refId !== refId)
+    }))
+    if (panelsToRemove.length > 0) {
+      scheduleSave()
+    }
   },
 
   updatePanel: (id, updates) => {

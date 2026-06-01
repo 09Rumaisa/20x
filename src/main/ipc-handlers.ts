@@ -144,8 +144,12 @@ export function registerIpcHandlers(
     return updated
   })
 
-  ipcMain.handle('db:deleteTask', (_, id: string) => {
-    return db.deleteTask(id)
+  ipcMain.handle('db:deleteTask', (event, id: string) => {
+    const success = db.deleteTask(id)
+    if (success) {
+      event.sender.send('task:deleted', { taskId: id })
+    }
+    return success
   })
 
   ipcMain.handle('db:getSubtasks', (_, parentId: string) => {

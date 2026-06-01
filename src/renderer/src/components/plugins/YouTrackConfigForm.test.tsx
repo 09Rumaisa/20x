@@ -9,7 +9,8 @@ const mockResolveOptions = vi.fn()
 vi.mock('@/lib/ipc-client', () => ({
   pluginApi: {
     resolveOptions: (...args: unknown[]) => mockResolveOptions(...args)
-  }
+  },
+  onTaskDeleted: vi.fn(() => vi.fn()),
 }))
 
 // Mock electronAPI

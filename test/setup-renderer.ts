@@ -14,6 +14,7 @@ export const eventCallbacks = {
   onAgentApproval: null as ((event: AgentApprovalRequest) => void) | null,
   onOverdueCheck: null as (() => void) | null,
   onTaskUpdated: null as ((event: { taskId: string; updates: Partial<WorkfloTask> }) => void) | null,
+  onTaskDeleted: null as ((event: { taskId: string }) => void) | null,
   onWorktreeProgress: null as ((event: WorktreeProgressEvent) => void) | null
 }
 
@@ -154,6 +155,10 @@ const mockElectronAPI = {
     return vi.fn()
   }),
   onTaskCreated: vi.fn((_cb: (event: { task: WorkfloTask }) => void) => {
+    return vi.fn()
+  }),
+  onTaskDeleted: vi.fn((cb: (event: { taskId: string }) => void) => {
+    eventCallbacks.onTaskDeleted = cb
     return vi.fn()
   }),
   onGithubDeviceCode: vi.fn((_cb: (code: string) => void) => {

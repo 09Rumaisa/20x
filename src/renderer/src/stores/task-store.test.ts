@@ -5,6 +5,14 @@ import type { WorkfloTask, CreateTaskDTO, UpdateTaskDTO } from '@/types'
 
 const mockElectronAPI = window.electronAPI
 
+// Capture listener callbacks before any test clears mocks.
+// The store registers these once at module init time.
+let deletedCallback: ((event: { taskId: string }) => void) | null = null
+{
+  const calls = (mockElectronAPI.onTaskDeleted as unknown as Mock).mock.calls
+  if (calls.length > 0) deletedCallback = calls[0][0]
+}
+
 beforeEach(() => {
   useTaskStore.setState({
     tasks: [],
@@ -127,6 +135,23 @@ describe('useTaskStore', () => {
       await useTaskStore.getState().deleteTask('t1')
 
       expect(useTaskStore.getState().selectedTaskId).toBe('t2')
+    })
+  })
+
+  describe('onTaskDeleted', () => {
+    it('removes task from list when event received', () => {
+      useTaskStore.setState({
+        tasks: [{ id: 't1' }, { id: 't2' }] as unknown as WorkfloTask[],
+        selectedTaskId: 't1'
+      })
+
+      if (deletedCallback) {
+        deletedCallback({ taskId: 't1' })
+      }
+
+      expect(useTaskStore.getState().tasks).toHaveLength(1)
+      expect(useTaskStore.getState().tasks[0].id).toBe('t2')
+      expect(useTaskStore.getState().selectedTaskId).toBeNull()
     })
   })
 
