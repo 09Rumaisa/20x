@@ -137,6 +137,7 @@ describe('AgentManager skill file paths', () => {
 
       expect((manager as any).shouldEnableTillDone('heartbeat-task-1', null)).toBe(false)
       expect((manager as any).shouldEnableTillDone('task-1', { status: TaskStatus.Triaging })).toBe(false)
+      expect((manager as any).shouldEnableTillDone('task-1', { status: TaskStatus.AgentLearning })).toBe(false)
     })
 
     it('enables tillDone for regular task sessions', () => {

@@ -530,6 +530,7 @@ export class AgentManager extends EventEmitter {
     if (taskId === 'mastermind-session') return false
     if (taskId.startsWith('heartbeat-')) return false
     if (task?.status === TaskStatus.Triaging) return false
+    if (task?.status === TaskStatus.AgentLearning) return false
     return true
   }
 
