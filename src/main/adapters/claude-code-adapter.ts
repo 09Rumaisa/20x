@@ -34,6 +34,15 @@ let resolvedClaudeExecutablePath: string | null = null
 /** Maximum number of messages to keep in the buffer per session */
 const MAX_MESSAGE_BUFFER_SIZE = 500
 
+export enum ClaudeSystemSubtype {
+  INIT = 'init',
+  TASK_STARTED = 'task_started',
+  TASK_PROGRESS = 'task_progress',
+  TASK_NOTIFICATION = 'task_notification',
+  STATUS = 'status',
+  THINKING_TOKENS = 'thinking_tokens',
+}
+
 interface ClaudeSession {
   sessionId: string // Claude's internal session ID
   queryIterator: Query | null
@@ -1530,12 +1539,12 @@ export class ClaudeCodeAdapter implements CodingAgentAdapter {
       }
     } else if (msgWithProps.type === 'system') {
       // Skip system init messages - they're internal session setup
-      if (msgWithProps.subtype === 'init') {
+      if (msgWithProps.subtype === ClaudeSystemSubtype.INIT) {
         return parts
       }
 
       // SDKTaskStartedMessage — subagent task started
-      if (msgWithProps.subtype === 'task_started') {
+      if (msgWithProps.subtype === ClaudeSystemSubtype.TASK_STARTED) {
         const taskId = msgWithProps.task_id || msgWithProps.uuid || `task-${Date.now()}`
         const partId = `task-${taskId}`
         if (!seenPartIds.has(partId)) {
@@ -1556,7 +1565,7 @@ export class ClaudeCodeAdapter implements CodingAgentAdapter {
       }
 
       // SDKTaskProgressMessage — periodic progress updates for running subagent tasks
-      if (msgWithProps.subtype === 'task_progress') {
+      if (msgWithProps.subtype === ClaudeSystemSubtype.TASK_PROGRESS) {
         const taskId = msgWithProps.task_id || `task-${Date.now()}`
         const partId = `task-${taskId}`
         const usage = msgWithProps.usage
@@ -1585,7 +1594,7 @@ export class ClaudeCodeAdapter implements CodingAgentAdapter {
       }
 
       // SDKTaskNotificationMessage — subtask completion notifications
-      if (msgWithProps.subtype === 'task_notification') {
+      if (msgWithProps.subtype === ClaudeSystemSubtype.TASK_NOTIFICATION) {
         const taskId = msgWithProps.task_id || `task-${Date.now()}`
         const partId = `task-${taskId}`
         const taskStatus = (msgWithProps.status || 'completed') as 'completed' | 'failed' | 'stopped'
@@ -1614,7 +1623,7 @@ export class ClaudeCodeAdapter implements CodingAgentAdapter {
       }
 
       // SDKStatusMessage — transient status indicators (e.g. 'compacting')
-      if (msgWithProps.subtype === 'status') {
+      if (msgWithProps.subtype === ClaudeSystemSubtype.STATUS) {
         // null status means "cleared" — skip
         if (!msgWithProps.status) return parts
         const partId = `system-status-${msgWithProps.uuid || Date.now()}`
@@ -1629,6 +1638,23 @@ export class ClaudeCodeAdapter implements CodingAgentAdapter {
             type: 'system-status' as MessagePartType,
             content: statusLabel,
             role: 'system',
+          })
+        }
+        return parts
+      }
+
+      // SDKThinkingTokensMessage — reasoning/thinking token updates from Claude Code
+      if (msgWithProps.subtype === ClaudeSystemSubtype.THINKING_TOKENS) {
+        const partId = `thinking-tokens-${msgWithProps.uuid || Date.now()}`
+        if (!seenPartIds.has(partId)) {
+          seenPartIds.add(partId)
+          const content = msgWithProps.text || msgWithProps.summary || 'Thinking'
+          partContentLengths.set(partId, String(content.length))
+          parts.push({
+            id: partId,
+            type: MessagePartType.REASONING,
+            text: content,
+            role: 'assistant',
           })
         }
         return parts

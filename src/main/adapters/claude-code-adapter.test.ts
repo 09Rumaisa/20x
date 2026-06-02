@@ -10,7 +10,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 vi.mock('child_process', () => ({ execFile: vi.fn() }))
 vi.mock('fs', () => ({ existsSync: vi.fn(() => false) }))
 
-import { ClaudeCodeAdapter } from './claude-code-adapter'
+import { ClaudeCodeAdapter, ClaudeSystemSubtype } from './claude-code-adapter'
+import { MessagePartType } from './coding-agent-adapter'
 
 /**
  * Helper: creates an adapter with a pre-populated session so we can test
@@ -514,6 +515,27 @@ describe('Workspace path encoding', () => {
   })
 })
 describe('ClaudeCodeAdapter task_progress handling', () => {
+  it('converts thinking_tokens system messages to reasoning parts', async () => {
+    const msg = {
+      type: 'system',
+      subtype: ClaudeSystemSubtype.THINKING_TOKENS,
+      text: 'Considering the next edit',
+      uuid: 'tt-1',
+      session_id: 's1',
+    }
+
+    const { adapter } = createAdapterWithSession('s1', [msg])
+    const seenPartIds = new Set<string>()
+    const partContentLengths = new Map<string, string>()
+    const parts = await adapter.pollMessages('s1', new Set(), seenPartIds, partContentLengths, {} as any)
+
+    expect(parts).toHaveLength(1)
+    expect(parts[0].type).toBe(MessagePartType.REASONING)
+    expect(parts[0].id).toBe('thinking-tokens-tt-1')
+    expect(parts[0].text).toBe('Considering the next edit')
+    expect(parts[0].role).toBe('assistant')
+  })
+
   it('converts task_started to TASK_PROGRESS part', async () => {
     const msg = {
       type: 'system',
