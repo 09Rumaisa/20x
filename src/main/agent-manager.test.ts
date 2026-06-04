@@ -1862,3 +1862,331 @@ describe('AgentManager startAdapterPolling — IDLE grace period for follow-up m
     expect(transitionSpy).toHaveBeenCalledOnce()
   })
 })
+
+describe('AgentManager tillDone nudge on idle', () => {
+  function buildManager() {
+    const mockDb = createMockDb({})
+    const mgr = new AgentManager(mockDb)
+    vi.spyOn(mgr as any, 'sendToRenderer').mockImplementation(() => undefined)
+    vi.spyOn(mgr as any, 'ensurePollingCoordinator').mockImplementation(() => undefined)
+    return mgr
+  }
+
+  it('sends a nudge instead of transitioning to idle when session has incomplete todos', async () => {
+    const mgr = buildManager()
+    const adapter = {
+      pollMessages: vi.fn(async () => []),
+      getStatus: vi.fn(async () => ({ type: SessionStatusType.IDLE })),
+    }
+
+    const session = {
+      agentId: 'agent-1',
+      taskId: 'task-1',
+      status: 'working' as const,
+      createdAt: new Date(),
+      seenMessageIds: new Set<string>(),
+      seenPartIds: new Set<string>(),
+      partContentLengths: new Map<string, string>(),
+      adapter,
+      pollingStarted: true,
+      // Todos captured from todowrite tool calls during polling
+      todos: [
+        { content: 'fix bug', status: 'in_progress' },
+        { content: 'write tests', status: 'pending' },
+        { content: 'setup CI', status: 'completed' }
+      ]
+    }
+    ;(mgr as any).sessions.set('session-1', session)
+
+    ;(mgr as any).startAdapterPolling(
+      'session-1',
+      adapter,
+      { agentId: 'agent-1', taskId: 'task-1', workspaceDir: '/tmp/ws' },
+      undefined,
+      session
+    )
+
+    const entry = (mgr as any).pollingEntries.get('session-1')
+    // Make the session old enough to pass grace periods
+    entry.createdAt = Date.now() - 30_000
+    entry.hasSeenWork = true
+
+    const transitionSpy = vi.spyOn(mgr as any, 'transitionToIdle').mockResolvedValue(undefined)
+    const sendSpy = vi.spyOn(mgr as any, 'doSendAdapterMessage').mockResolvedValue(undefined)
+
+    await (mgr as any).pollSingleSession(entry)
+
+    // Should NOT transition to idle
+    expect(transitionSpy).not.toHaveBeenCalled()
+    // Should send a nudge message containing the incomplete items
+    expect(sendSpy).toHaveBeenCalledOnce()
+    const nudgeText = sendSpy.mock.calls[0][2] as string
+    expect(nudgeText).toContain('fix bug')
+    expect(nudgeText).toContain('write tests')
+    expect(nudgeText).toContain('Remaining items')
+    expect(nudgeText).toContain('1/3 completed')
+    // Completed items should not appear in remaining
+    expect(nudgeText).not.toContain('setup CI')
+    // Nudge count should be incremented
+    expect(entry.tillDoneNudgeCount).toBe(1)
+  })
+
+  it('transitions to idle normally when all todos are completed', async () => {
+    const mgr = buildManager()
+    const adapter = {
+      pollMessages: vi.fn(async () => []),
+      getStatus: vi.fn(async () => ({ type: SessionStatusType.IDLE })),
+    }
+
+    const session = {
+      agentId: 'agent-1',
+      taskId: 'task-1',
+      status: 'working' as const,
+      createdAt: new Date(),
+      seenMessageIds: new Set<string>(),
+      seenPartIds: new Set<string>(),
+      partContentLengths: new Map<string, string>(),
+      adapter,
+      pollingStarted: true,
+      todos: [
+        { content: 'fix bug', status: 'completed' },
+        { content: 'write tests', status: 'done' }
+      ]
+    }
+    ;(mgr as any).sessions.set('session-1', session)
+
+    ;(mgr as any).startAdapterPolling(
+      'session-1',
+      adapter,
+      { agentId: 'agent-1', taskId: 'task-1', workspaceDir: '/tmp/ws' },
+      undefined,
+      session
+    )
+
+    const entry = (mgr as any).pollingEntries.get('session-1')
+    entry.createdAt = Date.now() - 30_000
+    entry.hasSeenWork = true
+
+    const transitionSpy = vi.spyOn(mgr as any, 'transitionToIdle').mockResolvedValue(undefined)
+    vi.spyOn(mgr as any, 'stopAdapterPolling').mockImplementation(() => undefined)
+    const sendSpy = vi.spyOn(mgr as any, 'doSendAdapterMessage').mockResolvedValue(undefined)
+
+    await (mgr as any).pollSingleSession(entry)
+
+    expect(transitionSpy).toHaveBeenCalledOnce()
+    expect(sendSpy).not.toHaveBeenCalled()
+  })
+
+  it('stops nudging after MAX_TILLDONE_NUDGES and transitions to idle', async () => {
+    const mgr = buildManager()
+    const adapter = {
+      pollMessages: vi.fn(async () => []),
+      getStatus: vi.fn(async () => ({ type: SessionStatusType.IDLE })),
+    }
+
+    const session = {
+      agentId: 'agent-1',
+      taskId: 'task-1',
+      status: 'working' as const,
+      createdAt: new Date(),
+      seenMessageIds: new Set<string>(),
+      seenPartIds: new Set<string>(),
+      partContentLengths: new Map<string, string>(),
+      adapter,
+      pollingStarted: true,
+      todos: [{ content: 'stuck task', status: 'pending' }]
+    }
+    ;(mgr as any).sessions.set('session-1', session)
+
+    ;(mgr as any).startAdapterPolling(
+      'session-1',
+      adapter,
+      { agentId: 'agent-1', taskId: 'task-1', workspaceDir: '/tmp/ws' },
+      undefined,
+      session
+    )
+
+    const entry = (mgr as any).pollingEntries.get('session-1')
+    entry.createdAt = Date.now() - 30_000
+    entry.hasSeenWork = true
+    // Simulate having already nudged the max number of times
+    entry.tillDoneNudgeCount = (AgentManager as any).MAX_TILLDONE_NUDGES
+
+    const transitionSpy = vi.spyOn(mgr as any, 'transitionToIdle').mockResolvedValue(undefined)
+    vi.spyOn(mgr as any, 'stopAdapterPolling').mockImplementation(() => undefined)
+    const sendSpy = vi.spyOn(mgr as any, 'doSendAdapterMessage').mockResolvedValue(undefined)
+
+    await (mgr as any).pollSingleSession(entry)
+
+    // Should transition to idle since nudge limit is reached
+    expect(transitionSpy).toHaveBeenCalledOnce()
+    expect(sendSpy).not.toHaveBeenCalled()
+  })
+
+  it('resets tillDoneNudgeCount when session goes back to BUSY', async () => {
+    const mgr = buildManager()
+    const adapter = {
+      pollMessages: vi.fn(async () => []),
+      getStatus: vi.fn(async () => ({ type: SessionStatusType.BUSY })),
+    }
+
+    const session = {
+      agentId: 'agent-1',
+      taskId: 'task-1',
+      status: 'working' as const,
+      createdAt: new Date(),
+      seenMessageIds: new Set<string>(),
+      seenPartIds: new Set<string>(),
+      partContentLengths: new Map<string, string>(),
+      adapter,
+      pollingStarted: true,
+      todos: [{ content: 'some task', status: 'pending' }]
+    }
+    ;(mgr as any).sessions.set('session-1', session)
+
+    ;(mgr as any).startAdapterPolling(
+      'session-1',
+      adapter,
+      { agentId: 'agent-1', taskId: 'task-1', workspaceDir: '/tmp/ws' },
+      undefined,
+      session
+    )
+
+    const entry = (mgr as any).pollingEntries.get('session-1')
+    entry.tillDoneNudgeCount = 3
+
+    await (mgr as any).pollSingleSession(entry)
+
+    // BUSY resets the nudge counter
+    expect(entry.tillDoneNudgeCount).toBe(0)
+  })
+
+  it('end-to-end: captures todos from polled messages, nudges on idle, then transitions when done', async () => {
+    const mgr = buildManager()
+
+    // Step 1: Agent is working and creates a todo list via todowrite
+    let statusType = SessionStatusType.BUSY
+    const adapter = {
+      pollMessages: vi.fn(async () => []),
+      getStatus: vi.fn(async () => ({ type: statusType })),
+    }
+
+    const session = {
+      agentId: 'agent-1',
+      taskId: 'task-1',
+      status: 'working' as const,
+      createdAt: new Date(),
+      seenMessageIds: new Set<string>(),
+      seenPartIds: new Set<string>(),
+      partContentLengths: new Map<string, string>(),
+      adapter,
+      pollingStarted: true,
+    }
+    ;(mgr as any).sessions.set('session-1', session)
+
+    ;(mgr as any).startAdapterPolling(
+      'session-1',
+      adapter,
+      { agentId: 'agent-1', taskId: 'task-1', workspaceDir: '/tmp/ws' },
+      undefined,
+      session
+    )
+
+    const entry = (mgr as any).pollingEntries.get('session-1')
+    entry.createdAt = Date.now() - 30_000
+    entry.hasSeenWork = true
+
+    // Agent polls back a todowrite tool call with 3 items
+    adapter.pollMessages.mockResolvedValueOnce([
+      {
+        id: 'part-todo-1',
+        role: 'assistant',
+        type: 'todowrite',
+        content: 'Todo List',
+        tool: {
+          name: 'TodoWrite',
+          status: 'success',
+          todos: [
+            { id: '1', content: 'write unit tests', status: 'in_progress' },
+            { id: '2', content: 'fix linting errors', status: 'pending' },
+            { id: '3', content: 'update README', status: 'pending' }
+          ]
+        }
+      }
+    ] as any)
+
+    // Poll while BUSY — should capture todos onto session
+    await (mgr as any).pollSingleSession(entry)
+    expect((session as any).todos).toEqual([
+      { content: 'write unit tests', status: 'in_progress' },
+      { content: 'fix linting errors', status: 'pending' },
+      { content: 'update README', status: 'pending' }
+    ])
+
+    // Step 2: Agent goes idle WITHOUT finishing todos
+    statusType = SessionStatusType.IDLE
+    adapter.pollMessages.mockResolvedValueOnce([])
+    // Clear the post-data grace timer so idle detection isn't skipped
+    entry.lastPartReceivedAt = Date.now() - 10_000
+
+    const transitionSpy = vi.spyOn(mgr as any, 'transitionToIdle').mockResolvedValue(undefined)
+    const sendSpy = vi.spyOn(mgr as any, 'doSendAdapterMessage').mockResolvedValue(undefined)
+
+    await (mgr as any).pollSingleSession(entry)
+
+    // Should NOT transition — should nudge instead
+    expect(transitionSpy).not.toHaveBeenCalled()
+    expect(sendSpy).toHaveBeenCalledOnce()
+    const nudgeText = sendSpy.mock.calls[0][2] as string
+    expect(nudgeText).toContain('0/3 completed')
+    expect(nudgeText).toContain('[in_progress] write unit tests')
+    expect(nudgeText).toContain('[pending] fix linting errors')
+    expect(nudgeText).toContain('[pending] update README')
+    expect(entry.tillDoneNudgeCount).toBe(1)
+
+    // Step 3: Agent resumes work (BUSY), completes all todos
+    statusType = SessionStatusType.BUSY
+    sendSpy.mockClear()
+    transitionSpy.mockClear()
+
+    adapter.pollMessages.mockResolvedValueOnce([
+      {
+        id: 'part-todo-2',
+        role: 'assistant',
+        type: 'todowrite',
+        content: 'Todo List',
+        tool: {
+          name: 'TodoWrite',
+          status: 'success',
+          todos: [
+            { id: '1', content: 'write unit tests', status: 'completed' },
+            { id: '2', content: 'fix linting errors', status: 'completed' },
+            { id: '3', content: 'update README', status: 'completed' }
+          ]
+        }
+      }
+    ] as any)
+
+    await (mgr as any).pollSingleSession(entry)
+    // Nudge counter should reset on BUSY
+    expect(entry.tillDoneNudgeCount).toBe(0)
+    // Todos should be updated to all completed
+    expect((session as any).todos).toEqual([
+      { content: 'write unit tests', status: 'completed' },
+      { content: 'fix linting errors', status: 'completed' },
+      { content: 'update README', status: 'completed' }
+    ])
+
+    // Step 4: Agent goes idle again — all todos done, should transition normally
+    statusType = SessionStatusType.IDLE
+    adapter.pollMessages.mockResolvedValueOnce([])
+    entry.lastPartReceivedAt = Date.now() - 10_000
+    vi.spyOn(mgr as any, 'stopAdapterPolling').mockImplementation(() => undefined)
+
+    await (mgr as any).pollSingleSession(entry)
+
+    // Should transition to idle (all done) — no nudge
+    expect(transitionSpy).toHaveBeenCalledOnce()
+    expect(sendSpy).not.toHaveBeenCalled()
+  })
+})

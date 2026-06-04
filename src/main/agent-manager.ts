@@ -31,6 +31,11 @@ enum CodingAgentType {
 const DEFAULT_SERVER_URL = 'http://localhost:4096'
 const WORKFLO_MCP_DEV_PATH = '/api/mcp/dev/mcp'
 
+interface TodoItem {
+  content: string
+  status: string
+}
+
 interface AgentSession {
   id: string
   agentId: string
@@ -44,6 +49,8 @@ interface AgentSession {
   learningMode?: boolean
   isTriageSession?: boolean
   lastAssistantText?: string
+  /** Latest todo list captured from todowrite tool calls during polling. */
+  todos?: TodoItem[]
   adapter?: CodingAgentAdapter
   secretSessionToken?: string
   pollingStarted?: boolean
@@ -124,6 +131,9 @@ interface PollingEntry {
   createdAt: number  // Timestamp to enforce grace period before IDLE transition
   hasSeenWork?: boolean  // True once we've seen at least one non-IDLE status
   lastPartReceivedAt?: number  // Timestamp of last received data — used for secondary grace period
+  /** How many times the tillDone nudge has been sent for this polling cycle.
+   *  Capped at MAX_TILLDONE_NUDGES to prevent infinite nudge loops. */
+  tillDoneNudgeCount?: number
 }
 
 interface MessageAttachmentRef {
@@ -165,6 +175,8 @@ export class AgentManager extends EventEmitter {
   // Maximum number of session ID redirects to keep (old temp IDs → real IDs).
   // Without a cap these grow forever across many session start/stop cycles.
   private static readonly MAX_SESSION_REDIRECTS = 200
+  /** Maximum number of tillDone idle nudges per session before giving up. */
+  private static readonly MAX_TILLDONE_NUDGES = 5
 
   // ── Event-driven nudge ──
   // When an adapter buffers new stream data it calls onDataAvailable().
@@ -1758,6 +1770,18 @@ Only create this file when there's genuinely useful monitoring to do. Do not cre
           if (msg.role === 'assistant' && msg.partType === 'text' && msg.content) {
             assistantTexts.push(msg.content)
           }
+          // Capture todo list from todowrite tool calls — used to nudge the
+          // agent when it goes idle with incomplete items.  Works for all
+          // coding agents (Claude Code, OpenCode, etc.) without adapter-specific hooks.
+          const toolObj = msg.tool as { todos?: unknown } | undefined
+          if (toolObj?.todos && Array.isArray(toolObj.todos)) {
+            currentSession.todos = (toolObj.todos as Array<Record<string, unknown>>)
+              .filter(Boolean)
+              .map((t) => ({
+                content: String(t.content || t.text || t.title || ''),
+                status: String(t.status || 'pending')
+              }))
+          }
         }
         if (assistantTexts.length > 0) {
           // Replace (not append) and cap at 50 KB to prevent unbounded string growth
@@ -1857,8 +1881,11 @@ Only create this file when there's genuinely useful monitoring to do. Do not cre
       } else if (status.type === SessionStatusType.BUSY && session) {
         // Backend is actively processing — disable the IDLE grace period.
         const peBusy = this.pollingEntries.get(sessionId)
-        if (peBusy && !peBusy.hasSeenWork) {
-          peBusy.hasSeenWork = true
+        if (peBusy) {
+          if (!peBusy.hasSeenWork) peBusy.hasSeenWork = true
+          // Agent resumed work (possibly after a tillDone nudge) — reset the
+          // nudge counter so the next idle cycle gets a fresh allowance.
+          if (peBusy.tillDoneNudgeCount) peBusy.tillDoneNudgeCount = 0
         }
         if (session.status !== 'working') {
           session.status = 'working'
@@ -1893,6 +1920,42 @@ Only create this file when there's genuinely useful monitoring to do. Do not cre
           const timeSinceLastData = Date.now() - pollingEntry.lastPartReceivedAt
           if (timeSinceLastData < POST_DATA_GRACE_MS) {
             return
+          }
+        }
+
+        // ── TillDone nudge: if the agent created a todo list (via todowrite)
+        // and went idle with incomplete items, prompt it to continue instead
+        // of transitioning to idle. Works for ALL coding agents — todos are
+        // captured from polled messages, not from adapter-specific state files.
+        if (pollingEntry && session.todos && session.todos.length > 0) {
+          const DONE_STATUSES = ['completed', 'cancelled', 'done', 'removed']
+          const incomplete = session.todos.filter(t => !DONE_STATUSES.includes(t.status))
+          const nudgeCount = pollingEntry.tillDoneNudgeCount || 0
+
+          if (incomplete.length > 0 && nudgeCount < AgentManager.MAX_TILLDONE_NUDGES) {
+            const completed = session.todos.length - incomplete.length
+            const lines = [
+              `TillDone: you went idle but your to-do list is NOT finished (${completed}/${session.todos.length} completed).`,
+              '',
+              'Remaining items:'
+            ]
+            for (const t of incomplete) {
+              lines.push(`- [${t.status}] ${t.content}`)
+            }
+            lines.push('')
+            lines.push('Continue working on the remaining items above. Update todowrite as you progress and only stop once every item is completed or explicitly removed.')
+            const nudgeText = lines.join('\n')
+
+            pollingEntry.tillDoneNudgeCount = nudgeCount + 1
+            console.log(`[AgentManager] TillDone nudge #${nudgeCount + 1} for ${sessionId}: ${incomplete.length} incomplete todo(s)`)
+            // Send nudge via the standard message path which resets status
+            // to 'working' and keeps polling alive.
+            this.doSendAdapterMessage(session, sessionId, nudgeText).catch((err) => {
+              console.error(`[AgentManager] TillDone nudge failed for ${sessionId}:`, err)
+            })
+            return
+          } else if (incomplete.length > 0) {
+            console.log(`[AgentManager] TillDone nudge limit (${AgentManager.MAX_TILLDONE_NUDGES}) reached for ${sessionId}, transitioning to idle`)
           }
         }
 
